@@ -1,16 +1,14 @@
 ﻿using Identity.Core.Domain.IdentityEntities;
 using Identity.Core.DTO;
 using Identity.Core.ServiceContracts;
-using Identity.Core.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 
 namespace Identity.API.Controllers
 {
-    
+
     [Route("api/[controller]")]
     [ApiController]
     public class AccountController : ControllerBase
@@ -19,65 +17,56 @@ namespace Identity.API.Controllers
         private readonly IjwtService _jwtService;
 
 
-        public AccountController(UserManager<ApplicationUser> userManager , IjwtService ijwtService)
+        public AccountController(UserManager<ApplicationUser> userManager, IjwtService ijwtService)
         {
             _userManager = userManager;
             _jwtService = ijwtService;
         }
 
         [HttpPost("register")]
-        [Authorize("NotAuthorized")]
+        [Authorize(policy: "NotAuthorized")]
         public async Task<ActionResult> Register(RegisterDTO registerDTO)
         {
-            // 1. Validation
 
-            if (!ModelState.IsValid)
-            {
-                string errorMessage = string.Join(" | ", ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage));
-                return BadRequest(errorMessage);
-            }
-
-
-            //2- Create user
-            ApplicationUser user = new ApplicationUser()
+            var user = new ApplicationUser
             {
                 Email = registerDTO.Email,
-                PhoneNumber = registerDTO.Phone,
                 UserName = registerDTO.Email,
-                PersonName = registerDTO.PersonName
+                PhoneNumber = registerDTO.Phone,
+                PersonName = registerDTO.PersonName,
+                UserType = AppRoles.User 
             };
 
-            IdentityResult result = await _userManager.CreateAsync(user, registerDTO.Password);
+            var result = await _userManager.CreateAsync(user, registerDTO.Password);
 
-            if (result.Succeeded)
+            if (!result.Succeeded)
             {
-
-                var authenticationResponse = _jwtService.CreateJwtToken(user);
-                user.RefreshToken = authenticationResponse.RefreshToken;
-
-                user.RefreshTokenExpirationDateTime = authenticationResponse.RefreshTokenExpirationDateTime;
-                await _userManager.UpdateAsync(user);
-                return Ok(authenticationResponse);
+                var errors = string.Join(" | ",
+                    result.Errors.Select(e => e.Description));
+                return BadRequest(errors);
             }
-            else
-            {
-                string errorMessage = string.Join(" | ", result.Errors.Select(e => e.Description)); //error1 | error2
-                return BadRequest(errorMessage);
-            }
+
+            await _userManager.AddToRoleAsync(user, "User");
+
+            var authResponse = await _jwtService.CreateJwtToken(user);
+
+            user.RefreshToken = authResponse.RefreshToken;
+            user.RefreshTokenExpirationDateTime =
+                authResponse.RefreshTokenExpirationDateTime;
+
+            await _userManager.UpdateAsync(user);
+
+            return Ok(authResponse);
         }
 
-        [HttpPost("login")]
-        [Authorize("NotAuthorized")]
-        public async Task<IActionResult> PostLogin(LoginDTO loginDTO)
-        {
-            //Validation
-            if (!ModelState.IsValid)
-            {
-                string errorMessage = string.Join(" | ", ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage));
-                return BadRequest(errorMessage);
-            }
 
-            // 2. Find user by email
+        [HttpPost("login")]
+        //[Authorize("NotAuthorized")]
+        [AllowAnonymous]
+
+        public async Task<ActionResult> PostLogin(LoginDTO loginDTO)
+        {
+
             var user = await _userManager.FindByEmailAsync(loginDTO.Email);
             if (user == null)
             {
@@ -89,8 +78,7 @@ namespace Identity.API.Controllers
             if (!isPasswordValid)
                 return Unauthorized("Invalid email or password");
 
-
-            var authenticationResponse = _jwtService.CreateJwtToken(user);
+            var authenticationResponse = await _jwtService.CreateJwtToken(user);
 
             user.RefreshToken = authenticationResponse.RefreshToken;
 
@@ -99,12 +87,11 @@ namespace Identity.API.Controllers
 
             return Ok(authenticationResponse);
 
-
         }
 
         [Authorize]
         [HttpPost("logout")]
-        public async Task<IActionResult> PostLogout()
+        public async Task<ActionResult> PostLogout()
         {
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (string.IsNullOrEmpty(userId))
@@ -130,13 +117,13 @@ namespace Identity.API.Controllers
                 var errors = result.Errors.Select(e => e.Description);
                 return BadRequest(new { message = "Logout failed", errors });
             }
-             
+
             return Ok(new { message = "Logged out successfully" });
         }
 
         [AllowAnonymous]
         [HttpPost("generate-new-jwt-token")]
-        public async Task<IActionResult> GenerateNewAccessToken(TokenModel tokenModel)
+        public async Task<ActionResult> GenerateNewAccessToken(TokenModel tokenModel)
         {
             if (tokenModel == null ||
                 string.IsNullOrWhiteSpace(tokenModel.AccessToken) ||
@@ -146,7 +133,7 @@ namespace Identity.API.Controllers
             }
 
             ClaimsPrincipal? principal =
-                _jwtService.GetPrincipalFromJwtToken(tokenModel.AccessToken);
+               await _jwtService.GetPrincipalFromJwtToken(tokenModel.AccessToken);
 
             if (principal == null)
                 return Unauthorized("Invalid access token");
@@ -168,7 +155,7 @@ namespace Identity.API.Controllers
             }
 
             AuthenticationResponse authenticationResponse =
-                _jwtService.CreateJwtToken(user);
+                await _jwtService.CreateJwtToken(user);
 
             user.RefreshToken = authenticationResponse.RefreshToken;
             user.RefreshTokenExpirationDateTime =
@@ -179,10 +166,9 @@ namespace Identity.API.Controllers
             return Ok(authenticationResponse);
         }
 
-
         [AllowAnonymous]
         [HttpGet]
-        public async Task<IActionResult> IsEmailAlreadyRegistered(string email)
+        public async Task<ActionResult> IsEmailAlreadyRegistered(string email)
         {
             ApplicationUser? user = await _userManager.FindByEmailAsync(email);
 
@@ -194,6 +180,33 @@ namespace Identity.API.Controllers
             {
                 return Ok(false);
             }
+        }
+
+
+        [Authorize(Roles = AppRoles.Admin)]
+        [HttpPut("change-role")]
+        public async Task<ActionResult> ChangeUserRole(ChangeUserRoleDTO dto)
+        {
+            var user = await _userManager.FindByIdAsync(dto.UserId);
+            if (user == null) return NotFound();
+
+            var currentRoles = await _userManager.GetRolesAsync(user);
+            await _userManager.RemoveFromRolesAsync(user, currentRoles);
+            await _userManager.AddToRoleAsync(user, dto.Role);
+
+            user.UserType = dto.Role;
+            await _userManager.UpdateAsync(user);
+
+            return Ok($"Role changed to {dto.Role}");
+        }
+
+        [Authorize(Roles = AppRoles.Admin)]
+        [HttpGet("v")]
+        public ActionResult view()
+        {
+
+            return Ok("yes");
+
         }
     }
 }

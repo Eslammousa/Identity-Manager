@@ -7,11 +7,15 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using System.Security.Claims;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+
+builder.Services.AddHttpContextAccessor();
+
 
 var connectionString =
     builder.Configuration.GetConnectionString("constr")
@@ -57,6 +61,8 @@ builder.Services.AddAuthentication(options =>
                 Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!)
             ),
 
+        RoleClaimType = ClaimTypes.Role,
+        NameClaimType = ClaimTypes.NameIdentifier,
         ClockSkew = TimeSpan.Zero
     };
 });
@@ -80,8 +86,20 @@ builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+
+    var roleManager = services.GetRequiredService<RoleManager<ApplicationRole>>();
+    var userManager = services.GetRequiredService<UserManager<ApplicationUser>>();
+
+    await IdentitySeeder.SeedAsync(roleManager, userManager);
+}
+
 app.UseSwagger();
 app.UseSwaggerUI();
+
+
 
 app.UseHttpsRedirection();
 

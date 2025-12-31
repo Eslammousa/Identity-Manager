@@ -1,6 +1,7 @@
 ﻿using Identity.Core.Domain.IdentityEntities;
 using Identity.Core.DTO;
 using Identity.Core.ServiceContracts;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
@@ -13,19 +14,21 @@ namespace Identity.Core.Services
     public class JwtService : IjwtService
     {
         private readonly IConfiguration _configuration;
-
-        public JwtService(IConfiguration configuration)
+        private readonly UserManager<ApplicationUser> _userManager;
+        public JwtService(IConfiguration configuration, UserManager<ApplicationUser> userManager)
         {
             _configuration = configuration;
+            _userManager = userManager;
+
         }
 
-        public AuthenticationResponse CreateJwtToken(ApplicationUser user)
+        public async Task<AuthenticationResponse> CreateJwtToken(ApplicationUser user)
         {
             DateTime expiration = DateTime.UtcNow.AddMinutes(
                 Convert.ToDouble(_configuration["Jwt:EXPIRATION_MINUTES"])
             );
 
-            Claim[] claims = new Claim[]
+            var claims = new List<Claim>
             {
                 new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
                 new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
@@ -35,20 +38,28 @@ namespace Identity.Core.Services
                     ClaimValueTypes.Integer64
                 ),
 
+
                 new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
                 new Claim(ClaimTypes.Name, user.PersonName ?? string.Empty),
                 new Claim(ClaimTypes.Email, user.Email ?? string.Empty)
             };
 
-            SymmetricSecurityKey securityKey =
+            // =====  ADD ROLES =====
+            var roles = await _userManager.GetRolesAsync(user);
+            foreach (var role in roles)
+            {
+                claims.Add(new Claim(ClaimTypes.Role, role));
+            }
+
+            var securityKey =
                 new SymmetricSecurityKey(
                     Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]!)
                 );
 
-            SigningCredentials signingCredentials =
+            var signingCredentials =
                 new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
 
-            JwtSecurityToken tokenGenerator = new JwtSecurityToken(
+            var tokenGenerator = new JwtSecurityToken(
                 issuer: _configuration["Jwt:Issuer"],
                 audience: _configuration["Jwt:Audience"],
                 claims: claims,
@@ -61,8 +72,9 @@ namespace Identity.Core.Services
             return new AuthenticationResponse
             {
                 AccessToken = token,
-                Email = user.Email,
-                PersonName = user.PersonName,
+                Email = user.Email!,
+                PersonName = user.PersonName!,
+                UserType = user.UserType,
                 Expiration = expiration,
                 RefreshToken = GenerateRefreshToken(),
                 RefreshTokenExpirationDateTime =
@@ -80,7 +92,7 @@ namespace Identity.Core.Services
             return Convert.ToBase64String(bytes);
         }
 
-        public ClaimsPrincipal? GetPrincipalFromJwtToken(string? token)
+        public async Task<ClaimsPrincipal?> GetPrincipalFromJwtToken(string? token)
         {
             if (string.IsNullOrWhiteSpace(token))
                 return null;

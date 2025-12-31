@@ -6,7 +6,7 @@ namespace Identity.Core.ServiceContracts
 {
     public interface IjwtService
     {
-        AuthenticationResponse CreateJwtToken(ApplicationUser user);
-        ClaimsPrincipal? GetPrincipalFromJwtToken(string? token);
+        Task <AuthenticationResponse> CreateJwtToken(ApplicationUser user);
+        Task<ClaimsPrincipal?> GetPrincipalFromJwtToken(string? token);
     }
 }

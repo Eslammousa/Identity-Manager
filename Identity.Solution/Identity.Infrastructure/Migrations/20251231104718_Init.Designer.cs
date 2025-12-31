@@ -12,8 +12,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Identity.Infrastructure.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20251219140000_JWTandRefreshToken")]
-    partial class JWTandRefreshToken
+    [Migration("20251231104718_Init")]
+    partial class Init
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -102,7 +102,7 @@ namespace Identity.Infrastructure.Migrations
                     b.Property<string>("RefreshToken")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<DateTime>("RefreshTokenExpirationDateTime")
+                    b.Property<DateTime?>("RefreshTokenExpirationDateTime")
                         .HasColumnType("datetime2");
 
                     b.Property<string>("SecurityStamp")
